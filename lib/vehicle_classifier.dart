@@ -9,7 +9,7 @@ class VehicleClassifier {
   ClassificationModel selected = ClassificationModel.dt;
 
   static const Map<ClassificationModel, String> _modelFilenames = {
-    ClassificationModel.dt: 'decision_forest',
+    ClassificationModel.dt: 'decision_tree',
     ClassificationModel.knn: 'knn',
     ClassificationModel.nn: 'neural_network',
     ClassificationModel.rf: 'random_forest',
@@ -17,7 +17,7 @@ class VehicleClassifier {
   };
 
   static const Map<ClassificationModel, String> modelNames = {
-    ClassificationModel.dt: 'Decision Forest',
+    ClassificationModel.dt: 'Decision Tree',
     ClassificationModel.knn: 'K-NN',
     ClassificationModel.nn: 'Neural Network',
     ClassificationModel.rf: 'Random Forest',
