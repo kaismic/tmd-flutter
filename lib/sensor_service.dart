@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:sensors_plus/sensors_plus.dart';
-import 'package:geolocator/geolocator.dart';
+// import 'package:geolocator/geolocator.dart';
 import 'sensor_reading.dart';
 import 'feature_extractor.dart';
 
@@ -135,12 +135,12 @@ class SensorService {
     _window.clear();
   }
 
-  Future<void> _checkLocationPermission() async {
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-  }
+  // Future<void> _checkLocationPermission() async {
+  //   LocationPermission permission = await Geolocator.checkPermission();
+  //   if (permission == LocationPermission.denied) {
+  //     permission = await Geolocator.requestPermission();
+  //   }
+  // }
 
   void dispose() {
     stop();

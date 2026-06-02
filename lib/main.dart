@@ -31,7 +31,6 @@ class _DetectorPageState extends State<DetectorPage> {
   final _orchestrator = DetectionOrchestrator();
   final List<PredictionEntry> _history = [];
   static const int _maxHistory = 10;
-  bool _running = false;
 
   @override
   void initState() {
@@ -56,12 +55,12 @@ class _DetectorPageState extends State<DetectorPage> {
   }
 
   Future<void> _toggle() async {
-    if (_running) {
+    if (_orchestrator.running) {
       await _orchestrator.stop();
     } else {
       await _orchestrator.start();
     }
-    setState(() => _running = !_running);
+    setState(() => {});
   }
 
   Future<void> _showModelPicker() async {
@@ -143,7 +142,7 @@ class _DetectorPageState extends State<DetectorPage> {
               child: _history.isEmpty
                   ? Center(
                       child: Text(
-                        _running
+                        _orchestrator.running
                             ? 'Waiting for first prediction…'
                             : 'Press Start to begin',
                         style: theme.textTheme.bodyMedium?.copyWith(
@@ -161,25 +160,32 @@ class _DetectorPageState extends State<DetectorPage> {
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: _showModelPicker,
-              label: Text('Selected: ${VehicleClassifier.modelNames[_orchestrator.selectedModel]!}'),
+              label: Text(
+                'Selected: ${VehicleClassifier.modelNames[_orchestrator.selectedModel]!}',
+              ),
             ),
             // TODO remove after testing
             const SizedBox(height: 8),
             OutlinedButton.icon(
-              onPressed: _running
+              onPressed: _orchestrator.running && !_orchestrator.inVehicle
                   ? () => _orchestrator.debugStartVehicleInference()
                   : null,
               icon: const Icon(Icons.directions_car),
               label: const Text('Simulate IN_VEHICLE'),
+
             ),
             const SizedBox(height: 16),
             FilledButton.icon(
               onPressed: _toggle,
-              icon: Icon(_running ? Icons.stop : Icons.play_arrow),
-              label: Text(_running ? 'Stop Detection' : 'Start Detection'),
+              icon: Icon(_orchestrator.running ? Icons.stop : Icons.play_arrow),
+              label: Text(
+                _orchestrator.running ? 'Stop Detection' : 'Start Detection',
+              ),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                backgroundColor: _running ? theme.colorScheme.error : null,
+                backgroundColor: _orchestrator.running
+                    ? theme.colorScheme.error
+                    : null,
               ),
             ),
           ],

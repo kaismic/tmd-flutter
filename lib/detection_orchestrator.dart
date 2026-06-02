@@ -20,13 +20,7 @@ class DetectionOrchestrator {
   DetectionOrchestrator({
     SensorService? sensorService,
     VehicleClassifier? classifier,
-  }) : _sensorService =
-           sensorService ??
-           SensorService(
-             windowDuration: const Duration(seconds: 10),
-             samplingInterval: const Duration(milliseconds: 50),
-             inferenceInterval: const Duration(seconds: 1),
-           ),
+  }) : _sensorService = sensorService ?? SensorService(),
        _classifier = classifier ?? VehicleClassifier();
 
   final SensorService _sensorService;
@@ -39,27 +33,31 @@ class DetectionOrchestrator {
   StreamSubscription<List<double>>? _featureSub;
   StreamSubscription<double>? _fillSub;
 
-  bool _inVehicle = false;
-  bool _running = false;
+  bool inVehicle = false;
+  bool running = false;
 
   ClassificationModel get selectedModel => _classifier.selected;
 
   void setSelectedModel(ClassificationModel cm) {
     _classifier.selected = cm;
+    if (running) {
+      _classifier.load();
+    }
   }
 
   /// Start the orchestrator. Activity recognition begins immediately.
   Future<void> start() async {
-    if (_running) return;
-    _running = true;
+    if (running) return;
+    running = true;
     await _classifier.load();
     await _subscribeActivityStream();
   }
 
   /// Stop everything — activity recognition, sensor collection, inference.
   Future<void> stop() async {
-    if (!_running) return;
-    _running = false;
+    if (!running) return;
+    running = false;
+    inVehicle = false;
     await _activitySub?.cancel();
     _activitySub = null;
     await _stopVehicleInference();
@@ -71,7 +69,7 @@ class DetectionOrchestrator {
   void _onActivity(Activity activity) {
     final isVehicle = activity.type == ActivityType.IN_VEHICLE;
 
-  // TODO uncomment after testing
+    // TODO uncomment after testing
     // if (isVehicle && !_inVehicle) {
     //   // Transitioned INTO a vehicle — start ONNX pipeline
     //   _inVehicle = true;
@@ -140,13 +138,13 @@ class DetectionOrchestrator {
     }
   }
 
-// TODO remove after testing
+  // TODO remove after testing
   /// Forces the vehicle inference pipeline to start immediately,
   /// bypassing activity recognition. Remove before release.
   Future<void> debugStartVehicleInference() async {
-    if (!_running) await start();
-    if (!_inVehicle) {
-      _inVehicle = true;
+    if (!running) await start();
+    if (!inVehicle) {
+      inVehicle = true;
       await _startVehicleInference();
     }
   }

@@ -5,6 +5,7 @@ enum ClassificationModel { dt, knn, nn, rf, svm }
 
 class VehicleClassifier {
   OrtSession? _session;
+  bool loading = false;
   bool _isLoaded = false;
   ClassificationModel selected = ClassificationModel.dt;
 
@@ -34,14 +35,15 @@ class VehicleClassifier {
   ];
 
   Future<void> load() async {
-    if (_isLoaded) return;
-
+    if (loading) return;
+    loading = true;
+    _session?.close();
     final ort = OnnxRuntime();
     _session = await ort.createSessionFromAsset(
-      'assets/7264c172/${_modelFilenames[selected]}.onnx'
+      'assets/7264c172/${_modelFilenames[selected]}.onnx',
     );
-
     _isLoaded = true;
+    loading = false;
   }
 
   /// Run inference on [features] (output of FeatureExtractor.extract).
