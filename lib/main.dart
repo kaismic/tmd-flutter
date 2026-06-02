@@ -37,8 +37,8 @@ class _DetectorPageState extends State<DetectorPage> {
     super.initState();
     _orchestrator.stateStream.listen((state) {
       if (!state.isRunning ||
-          state.activityType == ActivityType.IN_VEHICLE &&
-              state.vehicleInference!.windowFill < 1.0 || state.vehicleInference!.confidence == 0) {
+            state.activityType == ActivityType.IN_VEHICLE
+            && state.vehicleInference!.windowFill < 1.0) {
         return;
       }
       setState(() {

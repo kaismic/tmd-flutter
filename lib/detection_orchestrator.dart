@@ -70,15 +70,15 @@ class DetectionOrchestrator {
     final isVehicle = activity.type == ActivityType.IN_VEHICLE;
 
     // TODO uncomment after testing
-    // if (isVehicle && !_inVehicle) {
+    // if (isVehicle && !inVehicle) {
     //   // Transitioned INTO a vehicle — start ONNX pipeline
-    //   _inVehicle = true;
+    //   inVehicle = true;
     //   _startVehicleInference();
     // }
     // if (!isVehicle) {
-    //   if (_inVehicle) {
+    //   if (inVehicle) {
     //     // Left the vehicle — stop ONNX pipeline
-    //     _inVehicle = false;
+    //     inVehicle = false;
     //     _stopVehicleInference();
     //   }
     //   _emit(TransportState.activity(activity.type, activity.confidence));
@@ -106,7 +106,7 @@ class DetectionOrchestrator {
       _emit(
         TransportState.vehicleInference(
           VehicleInference(VehicleMode.bus, 0.0, fill),
-        ),
+        )
       );
     });
 

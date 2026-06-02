@@ -82,9 +82,6 @@ class SensorService {
 
     // Sampling timer — snapshot all sensor values at fixed rate
     _samplingTimer = Timer.periodic(samplingInterval, (_) => _snapshot());
-
-    // Inference timer — extract features from the current window every second
-    _inferenceTimer = Timer.periodic(inferenceInterval, (_) => _emitFeatures());
   }
 
   void _snapshot() {
@@ -107,9 +104,16 @@ class SensorService {
     // Emit fill progress for UI if not filled yet
     final fill = (_window.length / _maxSamples).clamp(0.0, 1.0);
     if (!_isWindowFilled) {
-      _windowFillController.add(fill);
       if (fill == 1.0) {
         _isWindowFilled = true;
+        // Inference timer — extract features from the current window every second
+        _emitFeatures(); // Emit immediately on fill, then start periodic timer
+        _inferenceTimer = Timer.periodic(
+          inferenceInterval,
+          (_) => _emitFeatures(),
+        );
+      } else {
+        _windowFillController.add(fill);
       }
     }
   }
