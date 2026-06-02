@@ -38,7 +38,7 @@ class _DetectorPageState extends State<DetectorPage> {
     _orchestrator.stateStream.listen((state) {
       if (!state.isRunning ||
           state.activityType == ActivityType.IN_VEHICLE &&
-              state.vehicleInference!.windowFill < 1.0) {
+              state.vehicleInference!.windowFill < 1.0 || state.vehicleInference!.confidence == 0) {
         return;
       }
       setState(() {
@@ -172,7 +172,6 @@ class _DetectorPageState extends State<DetectorPage> {
                   : null,
               icon: const Icon(Icons.directions_car),
               label: const Text('Simulate IN_VEHICLE'),
-
             ),
             const SizedBox(height: 16),
             FilledButton.icon(
