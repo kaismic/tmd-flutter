@@ -1,4 +1,4 @@
-import 'package:tmd_prototype/transport_state.dart' show TransportState;
+import 'package:tmd_prototype/models/transport_state.dart' show TransportState;
 
 class PredictionEntry {
   final TransportState state;

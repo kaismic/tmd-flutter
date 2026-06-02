@@ -1,5 +1,5 @@
 import 'dart:math';
-import 'sensor_reading.dart';
+import 'models/sensor_reading.dart';
 
 class FeatureExtractor {
   /// Extracts a flat feature vector matching the Python training pipeline exactly.

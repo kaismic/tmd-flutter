@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_activity_recognition/flutter_activity_recognition.dart';
 import 'sensor_service.dart';
 import 'vehicle_classifier.dart';
-import 'transport_state.dart';
+import 'models/transport_state.dart';
 
 /// Coordinates between [FlutterActivityRecognition] and the ONNX inference
 /// pipeline.
@@ -40,7 +40,8 @@ class DetectionOrchestrator {
 
   void setSelectedModel(ClassificationModel cm) {
     _classifier.selected = cm;
-    if (running) {
+    // Classifier is already loaded with the previous model, so we need to reload to apply the change.
+    if (_classifier.isLoaded) {
       _classifier.load();
     }
   }
@@ -49,18 +50,17 @@ class DetectionOrchestrator {
   Future<void> start() async {
     if (running) return;
     running = true;
-    await _classifier.load();
     await _subscribeActivityStream();
   }
 
   /// Stop everything — activity recognition, sensor collection, inference.
   Future<void> stop() async {
     if (!running) return;
-    running = false;
-    inVehicle = false;
+    await _stopVehicleInference();
     await _activitySub?.cancel();
     _activitySub = null;
-    await _stopVehicleInference();
+    running = false;
+    inVehicle = false;
     _emit(TransportState.idle);
   }
 
@@ -70,19 +70,19 @@ class DetectionOrchestrator {
     final isVehicle = activity.type == ActivityType.IN_VEHICLE;
 
     // TODO uncomment after testing
-    // if (isVehicle && !inVehicle) {
-    //   // Transitioned INTO a vehicle — start ONNX pipeline
-    //   inVehicle = true;
-    //   _startVehicleInference();
-    // }
-    // if (!isVehicle) {
-    //   if (inVehicle) {
-    //     // Left the vehicle — stop ONNX pipeline
-    //     inVehicle = false;
-    //     _stopVehicleInference();
-    //   }
-    //   _emit(TransportState.activity(activity.type, activity.confidence));
-    // }
+    if (isVehicle && !inVehicle) {
+      // Transitioned INTO a vehicle — start ONNX pipeline
+      inVehicle = true;
+      _startVehicleInference();
+    }
+    if (!isVehicle) {
+      if (inVehicle) {
+        // Left the vehicle — stop ONNX pipeline
+        inVehicle = false;
+        _stopVehicleInference();
+      }
+      _emit(TransportState.activity(activity.type, activity.confidence));
+    }
     // If still in vehicle, let the ONNX inference stream drive the UI.
   }
 
@@ -106,7 +106,7 @@ class DetectionOrchestrator {
       _emit(
         TransportState.vehicleInference(
           VehicleInference(VehicleMode.bus, 0.0, fill),
-        )
+        ),
       );
     });
 
@@ -124,9 +124,10 @@ class DetectionOrchestrator {
   Future<void> _stopVehicleInference() async {
     await _featureSub?.cancel();
     await _fillSub?.cancel();
+    _sensorService.stop();
     _featureSub = null;
     _fillSub = null;
-    _sensorService.stop();
+    _classifier.dispose();
   }
 
   Future<void> _subscribeActivityStream() async {

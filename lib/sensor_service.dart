@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:sensors_plus/sensors_plus.dart';
 // import 'package:geolocator/geolocator.dart';
-import 'sensor_reading.dart';
+import 'models/sensor_reading.dart';
 import 'feature_extractor.dart';
 
 /// Collects raw sensor data into a sliding window and emits a computed

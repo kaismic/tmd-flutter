@@ -5,7 +5,7 @@ import 'package:tmd_prototype/vehicle_classifier.dart';
 import 'package:tmd_prototype/widgets/current_state_card.dart';
 import 'package:tmd_prototype/widgets/history_row.dart';
 import 'detection_orchestrator.dart';
-import 'transport_state.dart';
+import 'models/transport_state.dart';
 
 void main() => runApp(const TransportDetectorApp());
 
@@ -165,14 +165,14 @@ class _DetectorPageState extends State<DetectorPage> {
               ),
             ),
             // TODO remove after testing
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _orchestrator.running && !_orchestrator.inVehicle
-                  ? () => _orchestrator.debugStartVehicleInference()
-                  : null,
-              icon: const Icon(Icons.directions_car),
-              label: const Text('Simulate IN_VEHICLE'),
-            ),
+            // const SizedBox(height: 8),
+            // OutlinedButton.icon(
+            //   onPressed: _orchestrator.running && !_orchestrator.inVehicle
+            //       ? () => _orchestrator.debugStartVehicleInference()
+            //       : null,
+            //   icon: const Icon(Icons.directions_car),
+            //   label: const Text('Simulate IN_VEHICLE'),
+            // ),
             const SizedBox(height: 16),
             FilledButton.icon(
               onPressed: _toggle,

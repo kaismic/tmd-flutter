@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_activity_recognition/flutter_activity_recognition.dart';
-import 'package:tmd_prototype/transport_state.dart';
+import 'package:tmd_prototype/models/transport_state.dart';
 
 class ConfidenceChip extends StatelessWidget {
   const ConfidenceChip(this.state, {super.key});

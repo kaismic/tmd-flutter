@@ -1,12 +1,12 @@
 import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
-import 'transport_state.dart';
+import 'models/transport_state.dart';
 
 enum ClassificationModel { dt, knn, nn, rf, svm }
 
 class VehicleClassifier {
   OrtSession? _session;
-  bool loading = false;
-  bool _isLoaded = false;
+  bool _isLoading = false;
+  bool isLoaded = false;
   ClassificationModel selected = ClassificationModel.dt;
 
   static const Map<ClassificationModel, String> _modelFilenames = {
@@ -35,22 +35,23 @@ class VehicleClassifier {
   ];
 
   Future<void> load() async {
-    if (loading) return;
-    loading = true;
+    if (_isLoading) return;
+    _isLoading = true;
     _session?.close();
+    _session = null;
     final ort = OnnxRuntime();
     _session = await ort.createSessionFromAsset(
       'assets/7264c172/${_modelFilenames[selected]}.onnx',
     );
-    _isLoaded = true;
-    loading = false;
+    isLoaded = true;
+    _isLoading = false;
   }
 
   /// Run inference on [features] (output of FeatureExtractor.extract).
   /// Expects exactly 16 features as a flat list.
   /// Returns (predicted mode, confidence 0.0 - 1.0).
   Future<(VehicleMode, double)> predict(List<double> features) async {
-    if (!_isLoaded) await load();
+    if (!isLoaded) await load();
     assert(_session != null);
 
     final inputTensor = await OrtValue.fromList(features, [1, 16]);
@@ -79,6 +80,7 @@ class VehicleClassifier {
 
   void dispose() {
     _session?.close();
-    _isLoaded = false;
+    _session = null;
+    isLoaded = false;
   }
 }
