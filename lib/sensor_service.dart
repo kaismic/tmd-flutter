@@ -17,7 +17,7 @@ import 'feature_extractor.dart';
 /// rather than waiting for a full non-overlapping window to accumulate.
 class SensorService {
   SensorService({
-    this.windowDuration = const Duration(seconds: 5),
+    this.windowDuration = const Duration(seconds: 10),
     this.samplingInterval = const Duration(milliseconds: 50),
     this.inferenceInterval = const Duration(seconds: 2),
   });
