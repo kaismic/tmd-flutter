@@ -92,7 +92,6 @@ class SensorService {
         gyroscope: List.unmodifiable(_gyro),
         linearAccel: List.unmodifiable(_linearAccel),
         magnetometer: List.unmodifiable(_magnetometer),
-        speed: _speed,
       ),
     );
 
