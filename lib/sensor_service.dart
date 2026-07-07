@@ -31,7 +31,6 @@ class SensorService {
   List<double> _gyro = [0, 0, 0];
   List<double> _linearAccel = [0, 0, 0];
   List<double> _magnetometer = [0, 0, 0];
-  double? _speed;
 
   // Circular buffer of raw readings
   final List<SensorReading> _window = [];
