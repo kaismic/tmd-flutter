@@ -1,15 +1,18 @@
-class SensorReading {
-  final DateTime timestamp;
-  final List<double> accelerometer;   // [x, y, z]
-  final List<double> gyroscope;       // [x, y, z]
-  final List<double> linearAccel;     // [x, y, z]
-  final List<double> magnetometer;    // [x, y, z]
+enum SensorKind {
+  accelerometer(30),
+  gyroscope(4),
+  magnetometer(2);
 
-  const SensorReading({
-    required this.timestamp,
-    required this.accelerometer,
-    required this.gyroscope,
-    required this.linearAccel,
-    required this.magnetometer,
-  });
+  const SensorKind(this.minimumHz);
+  final int minimumHz;
+}
+
+/// Timestamp is monotonic elapsed collection time.
+class SensorReading {
+  const SensorReading(this.timestamp, this.x, this.y, this.z);
+  final Duration timestamp;
+  final double x;
+  final double y;
+  final double z;
+  bool get isFinite => x.isFinite && y.isFinite && z.isFinite;
 }

@@ -47,3 +47,10 @@ app.*.map.json
 
 # Machine learning models
 *.onnx
+
+# Reproducibly prepared models, parity fixtures and Python tooling environment
+/assets/sydney/
+/.venv*/
+/artifacts/
+/.pytest_cache/
+__pycache__/

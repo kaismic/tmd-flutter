@@ -1,43 +1,33 @@
 import 'dart:math';
+import 'dart:typed_data';
 import 'models/sensor_reading.dart';
 
 class FeatureExtractor {
-  /// Extracts a flat feature vector matching the Python training pipeline exactly.
-  /// Output order: [accel#mean, accel#std, accel#min, accel#max,
-  ///                gyro#mean,  gyro#std,  gyro#min,  gyro#max,
-  ///                linearAccel#mean, ..., magnetometer#mean, ...]
-  /// Total: 4 sensors × 4 features = 16 features
-  static List<double> extract(List<SensorReading> window) {
-    return [
-      ..._sensorFeatures(window, (r) => r.accelerometer),
-      ..._sensorFeatures(window, (r) => r.gyroscope),
-      ..._sensorFeatures(window, (r) => r.linearAccel),
-      ..._sensorFeatures(window, (r) => r.magnetometer),
-    ];
-  }
-
-  /// Computes magnitude of each reading, then returns [mean, std, min, max]
-  /// of the magnitude series — exactly matching the Python pipeline.
-  static List<double> _sensorFeatures(
-    List<SensorReading> window,
-    List<double> Function(SensorReading) accessor,
-  ) {
-    final magnitudes = window.map((r) {
-      final v = accessor(r);
-      return sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-    }).toList();
-    return _stats(magnitudes);
-  }
-
-  static List<double> _stats(List<double> values) {
-    if (values.isEmpty) return [0.0, 0.0, 0.0, 0.0];
-    final n = values.length;
-    final mean = values.reduce((a, b) => a + b) / n;
-    final min = values.reduce((a, b) => a < b ? a : b);
-    final max = values.reduce((a, b) => a > b ? a : b);
-    final std = sqrt(
-      values.map((v) => (v - mean) * (v - mean)).reduce((a, b) => a + b) / n,
-    );
-    return [mean, std, min, max];
+  /// First finite vector at each timestamp, population std, float32 rounding.
+  /// Missing sensors produce NaNs for the model's fitted imputer. No time padding.
+  static List<double> extract(Map<SensorKind, List<SensorReading>> window) {
+    final features = <double>[];
+    for (final kind in SensorKind.values) {
+      final seen = <Duration>{};
+      final values = [
+        for (final r in window[kind] ?? <SensorReading>[])
+          if (r.isFinite && seen.add(r.timestamp))
+            sqrt(r.x * r.x + r.y * r.y + r.z * r.z),
+      ];
+      if (values.isEmpty) {
+        features.addAll(
+          List.filled(kind == SensorKind.magnetometer ? 3 : 4, double.nan),
+        );
+        continue;
+      }
+      final mean = values.reduce((a, b) => a + b) / values.length;
+      final variance =
+          values.fold<double>(0, (s, x) => s + (x - mean) * (x - mean)) /
+          values.length;
+      final low = values.reduce(min), high = values.reduce(max);
+      if (kind != SensorKind.magnetometer) features.add(mean);
+      features.addAll([sqrt(variance), high - low, low]);
+    }
+    return List.unmodifiable(Float32List.fromList(features));
   }
 }

@@ -1,34 +1,56 @@
 import 'package:flutter_activity_recognition/flutter_activity_recognition.dart';
+import 'inference_window.dart';
 
 enum VehicleMode { bus, car, train }
 
-/// Snapshot of the detection pipeline at a point in time.
+/// Immutable snapshots keep prediction history independent of subsequent switches.
 class TransportState {
-  bool isRunning = false;
-  ActivityType activityType = ActivityType.UNKNOWN;
-  ActivityConfidence? activityConfidence;
-  VehicleInference? vehicleInference;
+  const TransportState._({
+    this.isRunning = false,
+    this.activityType = ActivityType.UNKNOWN,
+    this.activityConfidence,
+    this.vehicleInference,
+    this.message,
+  });
+  static const idle = TransportState._();
+  const TransportState.activity(
+    ActivityType type,
+    ActivityConfidence? confidence, {
+    String? message,
+  }) : this._(
+         isRunning: true,
+         activityType: type,
+         activityConfidence: confidence,
+         message: message,
+       );
+  const TransportState.vehicle(VehicleInference inference, {String? message})
+    : this._(
+        isRunning: true,
+        activityType: ActivityType.IN_VEHICLE,
+        vehicleInference: inference,
+        message: message,
+      );
+  const TransportState.error(String message) : this._(message: message);
 
-  static final TransportState idle = TransportState._idle();
-
-  TransportState._idle();
-  TransportState.activity(this.activityType, this.activityConfidence) : isRunning = true;
-  TransportState.vehicleInference(this.vehicleInference) : activityType = ActivityType.IN_VEHICLE, isRunning = true;
+  final bool isRunning;
+  final ActivityType activityType;
+  final ActivityConfidence? activityConfidence;
+  final VehicleInference? vehicleInference;
+  final String? message;
+  bool get hasPrediction => vehicleInference?.vehicleMode != null;
 
   String get label => switch (activityType) {
     ActivityType.STILL => 'Still',
     ActivityType.WALKING => 'Walking',
     ActivityType.RUNNING => 'Running',
     ActivityType.ON_BICYCLE => 'Cycling',
-    ActivityType.IN_VEHICLE =>
-      vehicleInference!.windowFill < 1.0
-      ? 'Warming up...'
-      : switch (vehicleInference!.vehicleMode) {
-        VehicleMode.bus => 'Bus',
-        VehicleMode.car => 'Car',
-        VehicleMode.train => 'Train',
+    ActivityType.IN_VEHICLE => switch (vehicleInference?.vehicleMode) {
+      VehicleMode.bus => 'Bus',
+      VehicleMode.car => 'Car',
+      VehicleMode.train => 'Train',
+      null => 'In vehicle',
     },
-    ActivityType.UNKNOWN => 'Unknown',
+    ActivityType.UNKNOWN => isRunning ? 'Unknown' : 'Detection stopped',
   };
 
   String get emoji => switch (activityType) {
@@ -36,22 +58,25 @@ class TransportState {
     ActivityType.WALKING => '🚶',
     ActivityType.RUNNING => '🏃',
     ActivityType.ON_BICYCLE => '🚴',
-    ActivityType.IN_VEHICLE =>
-      vehicleInference!.windowFill < 1.0
-      ? '⌛'
-      : switch (vehicleInference!.vehicleMode) {
+    ActivityType.IN_VEHICLE => switch (vehicleInference?.vehicleMode) {
       VehicleMode.bus => '🚌',
       VehicleMode.car => '🚗',
       VehicleMode.train => '🚆',
+      null => '⌛',
     },
     ActivityType.UNKNOWN => '❓',
   };
 }
 
 class VehicleInference {
-  VehicleMode vehicleMode = VehicleMode.bus;
-  double confidence = 0.0;
-  double windowFill = 0.0;
-
-  VehicleInference(this.vehicleMode, this.confidence, this.windowFill);
+  const VehicleInference({
+    required this.window,
+    required this.collectionId,
+    this.vehicleMode,
+    this.confidence,
+  });
+  final InferenceWindow window;
+  final int collectionId;
+  final VehicleMode? vehicleMode;
+  final double? confidence;
 }

@@ -1,180 +1,277 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_activity_recognition/flutter_activity_recognition.dart';
+import 'models/classification_model.dart';
+import 'models/transport_state.dart';
 import 'sensor_service.dart';
 import 'vehicle_classifier.dart';
-import 'models/transport_state.dart';
 
-/// Coordinates between [FlutterActivityRecognition] and the ONNX inference
-/// pipeline.
-///
-/// Behaviour:
-///   - Activity recognition runs continuously in the background.
-///   - Non-vehicle activities are
-///     passed straight through to [stateStream] using [DetectionSource.activityRecognition].
-///   - When IN_VEHICLE is detected, [SensorService] starts collecting data
-///     and [VehicleClassifier] fires every second on the sliding window.
-///   - When the activity leaves IN_VEHICLE, [SensorService] is stopped and
-///     ONNX inference halts immediately.
+/// Activity recognition gates collection. The single timer predicts every second
+/// from the selected trailing window; model selection never restarts sensors.
 class DetectionOrchestrator {
   DetectionOrchestrator({
     SensorService? sensorService,
     VehicleClassifier? classifier,
-  }) : _sensorService = sensorService ?? SensorService(),
-       _classifier = classifier ?? VehicleClassifier();
+    this.activities,
+    Future<bool> Function()? requestPermission,
+  }) : _sensors = sensorService ?? SensorService(),
+       _classifier = classifier ?? VehicleClassifier(),
+       _permission = requestPermission ?? _checkAndRequestPermission;
 
-  final SensorService _sensorService;
+  final SensorService _sensors;
   final VehicleClassifier _classifier;
-
-  final _stateController = StreamController<TransportState>.broadcast();
-  Stream<TransportState> get stateStream => _stateController.stream;
-
+  final Stream<Activity>? activities;
+  final Future<bool> Function() _permission;
+  final _states = StreamController<TransportState>.broadcast();
+  Stream<TransportState> get stateStream => _states.stream;
+  TransportState get currentState => _currentState;
+  TransportState _currentState = TransportState.idle;
   StreamSubscription<Activity>? _activitySub;
-  StreamSubscription<List<double>>? _featureSub;
-  StreamSubscription<double>? _fillSub;
-
-  bool inVehicle = false;
+  Timer? _timer;
+  Future<void> _lifecycle = Future.value();
+  ClassificationModel _selected = ClassificationModel.defaultModel;
+  ClassificationModel get selectedModel => _selected;
   bool running = false;
+  bool inVehicle = false;
+  bool _ready = false;
+  bool _busy = false;
+  bool _disposed = false;
+  int _collection = 0;
+  int _revision = 0;
+  int _startAttempt = 0;
+  int? _loadingRevision;
+  int? _failedRevision;
 
-  ClassificationModel get selectedModel => _classifier.selected;
+  void setSelectedModel(ClassificationModel model) {
+    if (_disposed) return;
+    if (_selected.id == model.id && _failedRevision == null) return;
+    _selected = model;
+    _revision++;
+    _failedRevision = null;
+    if (running && inVehicle && _ready) unawaited(_loadSelection());
+  }
 
-  void setSelectedModel(ClassificationModel cm) {
-    _classifier.selected = cm;
-    // Classifier is already loaded with the previous model, so we need to reload to apply the change.
-    if (_classifier.isLoaded) {
-      _classifier.load();
+  Future<void> start() async {
+    if (running || _disposed) return;
+    running = true;
+    final attempt = ++_startAttempt;
+    _revision++;
+    try {
+      final granted = await _permission();
+      if (!running || _disposed || attempt != _startAttempt) return;
+      if (!granted) {
+        running = false;
+        _emit(
+          const TransportState.error(
+            'Activity recognition permission is required.',
+          ),
+        );
+        return;
+      }
+      _emit(
+        const TransportState.activity(
+          ActivityType.UNKNOWN,
+          null,
+          message: 'Waiting for activity recognition',
+        ),
+      );
+      _activitySub =
+          (activities ?? FlutterActivityRecognition.instance.activityStream)
+              .listen(
+                _onActivity,
+                onError: (Object _) {
+                  if (!running || _disposed) return;
+                  _leaveVehicle();
+                  _emit(
+                    const TransportState.activity(
+                      ActivityType.UNKNOWN,
+                      null,
+                      message: 'Activity recognition unavailable',
+                    ),
+                  );
+                },
+              );
+    } catch (_) {
+      if (_disposed || attempt != _startAttempt) return;
+      running = false;
+      _emit(
+        const TransportState.error('Could not start activity recognition.'),
+      );
     }
   }
-
-  /// Start the orchestrator. Activity recognition begins immediately.
-  Future<void> start() async {
-    if (running) return;
-    running = true;
-    await _subscribeActivityStream();
-  }
-
-  /// Stop everything — activity recognition, sensor collection, inference.
-  Future<void> stop() async {
-    if (!running) return;
-    await _stopVehicleInference();
-    await _activitySub?.cancel();
-    _activitySub = null;
-    running = false;
-    inVehicle = false;
-    _emit(TransportState.idle);
-  }
-
-  // ── Activity recognition callback ──────────────────────────────────────
 
   void _onActivity(Activity activity) {
-    final isVehicle = activity.type == ActivityType.IN_VEHICLE;
-
-    // TODO uncomment after testing
-    if (isVehicle && !inVehicle) {
-      // Transitioned INTO a vehicle — start ONNX pipeline
+    if (!running || _disposed) return;
+    if (activity.type == ActivityType.IN_VEHICLE) {
+      if (inVehicle) return;
       inVehicle = true;
-      _startVehicleInference();
-    }
-    if (!isVehicle) {
-      if (inVehicle) {
-        // Left the vehicle — stop ONNX pipeline
-        inVehicle = false;
-        _stopVehicleInference();
-      }
+      final collection = ++_collection;
+      _revision++;
+      _lifecycle = _lifecycle.then((_) async {
+        if (!_active(collection)) return;
+        try {
+          await _sensors.start();
+          if (!_active(collection)) return;
+          _ready = true;
+          _timer = Timer.periodic(
+            const Duration(seconds: 1),
+            (_) => unawaited(_tick()),
+          );
+          unawaited(_loadSelection());
+        } catch (_) {
+          if (_active(collection)) {
+            _emit(
+              TransportState.vehicle(
+                _waiting(),
+                message: 'Sensor collection unavailable',
+              ),
+            );
+          }
+        }
+      });
+    } else {
+      _leaveVehicle();
       _emit(TransportState.activity(activity.type, activity.confidence));
     }
-    // If still in vehicle, let the ONNX inference stream drive the UI.
   }
 
-  void _onActivityError(Object error) {
-    // Activity recognition failure — fall back to unknown
-    debugPrint(StackTrace.current.toString());
-    debugPrint(error.runtimeType.toString());
-    debugPrint(error.toString());
-    _emit(TransportState.activity(ActivityType.UNKNOWN, null));
-  }
+  bool _active(int collection) =>
+      !_disposed && running && inVehicle && collection == _collection;
 
-  // ── ONNX inference pipeline ────────────────────────────────────────────
+  VehicleInference _waiting() => VehicleInference(
+    window: _sensors.snapshot(_selected),
+    collectionId: _collection,
+  );
 
-  Future<void> _startVehicleInference() async {
-    // Show IN_VEHICLE immediately while the window warms up
-
-    await _sensorService.start();
-
-    // Track window fill progress
-    _fillSub = _sensorService.windowFillStream.listen((fill) {
+  Future<void> _loadSelection() async {
+    final revision = _revision, collection = _collection;
+    final model = _selected;
+    _loadingRevision = revision;
+    _emit(TransportState.vehicle(_waiting(), message: 'Loading model…'));
+    try {
+      await _classifier.load(model);
+      if (!_active(collection) || revision != _revision) return;
+      _failedRevision = null;
       _emit(
-        TransportState.vehicleInference(
-          VehicleInference(VehicleMode.bus, 0.0, fill),
+        TransportState.vehicle(
+          _waiting(),
+          message: 'Waiting for next prediction',
         ),
       );
-    });
-
-    // Run inference on each emitted feature vector
-    _featureSub = _sensorService.featureStream.listen((features) async {
-      final (vehicleMode, confidence) = await _classifier.predict(features);
-      _emit(
-        TransportState.vehicleInference(
-          VehicleInference(vehicleMode, confidence, 1.0),
-        ),
-      );
-    });
-  }
-
-  Future<void> _stopVehicleInference() async {
-    await _featureSub?.cancel();
-    await _fillSub?.cancel();
-    _sensorService.stop();
-    _featureSub = null;
-    _fillSub = null;
-    _classifier.dispose();
-  }
-
-  Future<void> _subscribeActivityStream() async {
-    final granted = await _checkAndRequestPermission();
-    if (granted) {
-      _activitySub = FlutterActivityRecognition.instance.activityStream
-          .handleError(_onActivityError)
-          .listen(_onActivity);
+    } catch (_) {
+      if (_active(collection) && revision == _revision) {
+        _failedRevision = revision;
+        _emit(
+          TransportState.vehicle(
+            _waiting(),
+            message: 'Model could not be loaded. Select it again to retry.',
+          ),
+        );
+      }
+    } finally {
+      if (_loadingRevision == revision) _loadingRevision = null;
     }
   }
 
-  // TODO remove after testing
-  /// Forces the vehicle inference pipeline to start immediately,
-  /// bypassing activity recognition. Remove before release.
-  Future<void> debugStartVehicleInference() async {
-    if (!running) await start();
-    if (!inVehicle) {
-      inVehicle = true;
-      await _startVehicleInference();
+  Future<void> _tick() async {
+    if (!running ||
+        !inVehicle ||
+        !_ready ||
+        _busy ||
+        _loadingRevision == _revision ||
+        _failedRevision == _revision) {
+      return;
+    }
+    final collection = _collection, revision = _revision;
+    final model = _selected;
+    final window = _sensors.snapshot(model);
+    if (!window.hasData) {
+      _emit(
+        TransportState.vehicle(
+          VehicleInference(window: window, collectionId: collection),
+          message: 'Waiting for usable sensor readings',
+        ),
+      );
+      return;
+    }
+    _busy = true;
+    try {
+      final (mode, confidence) = await _classifier.predict(
+        model,
+        window.features,
+      );
+      if (!_active(collection) || revision != _revision) return;
+      _emit(
+        TransportState.vehicle(
+          VehicleInference(
+            window: window,
+            collectionId: collection,
+            vehicleMode: mode,
+            confidence: confidence,
+          ),
+        ),
+      );
+    } catch (_) {
+      if (_active(collection) && revision == _revision) {
+        _emit(
+          TransportState.vehicle(
+            VehicleInference(window: window, collectionId: collection),
+            message: 'Prediction unavailable; retrying next second',
+          ),
+        );
+      }
+    } finally {
+      _busy = false;
     }
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────
+  void _leaveVehicle() {
+    if (!inVehicle && !_ready) return;
+    inVehicle = false;
+    _ready = false;
+    _collection++;
+    _revision++;
+    _timer?.cancel();
+    _timer = null;
+    _lifecycle = _lifecycle.then((_) async {
+      await _sensors.stop();
+      await _classifier.close();
+    });
+  }
+
+  Future<void> stop() async {
+    running = false;
+    _startAttempt++;
+    _revision++;
+    _leaveVehicle();
+    final subscription = _activitySub;
+    _activitySub = null;
+    _emit(TransportState.idle);
+    await subscription?.cancel();
+    await _lifecycle;
+  }
 
   void _emit(TransportState state) {
-    if (!_stateController.isClosed) _stateController.add(state);
+    if (_disposed || _states.isClosed) return;
+    _currentState = state;
+    _states.add(state);
   }
 
-  Future<bool> _checkAndRequestPermission() async {
-    ActivityPermission permission = await FlutterActivityRecognition.instance
+  static Future<bool> _checkAndRequestPermission() async {
+    var permission = await FlutterActivityRecognition.instance
         .checkPermission();
-    if (permission == ActivityPermission.PERMANENTLY_DENIED) {
-      return false;
-    } else if (permission == ActivityPermission.DENIED) {
+    if (permission == ActivityPermission.DENIED) {
       permission = await FlutterActivityRecognition.instance
           .requestPermission();
-      if (permission != ActivityPermission.GRANTED) {
-        return false;
-      }
     }
-    return true;
+    return permission == ActivityPermission.GRANTED;
   }
 
-  void dispose() {
-    stop();
-    _stateController.close();
-    _classifier.dispose();
-    _sensorService.dispose();
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    await stop();
+    await _sensors.stop();
+    await _classifier.dispose();
+    await _states.close();
   }
 }

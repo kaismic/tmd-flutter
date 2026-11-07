@@ -12,13 +12,14 @@ class ConfidenceChip extends StatelessWidget {
     Color dark;
     Color light;
     String text;
-    if (state.activityType == ActivityType.IN_VEHICLE) {
-      (dark, light) = state.vehicleInference!.confidence >= 0.8
+    if (state.hasPrediction) {
+      final confidence = state.vehicleInference!.confidence!;
+      (dark, light) = confidence >= 0.8
           ? (Colors.green.shade700, Colors.green.shade100)
-          : state.vehicleInference!.confidence >= 0.5
+          : confidence >= 0.5
           ? (Colors.orange.shade700, Colors.orange.shade100)
           : (Colors.red.shade700, Colors.red.shade100);
-      text = (state.vehicleInference!.confidence * 100).toInt().toString();
+      text = '${(confidence * 100).round()}%';
     } else {
       if (state.activityConfidence != null) {
         switch (state.activityConfidence!) {

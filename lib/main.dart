@@ -1,17 +1,17 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_activity_recognition/flutter_activity_recognition.dart';
-import 'package:tmd_prototype/models/prediction_entry.dart';
-import 'package:tmd_prototype/vehicle_classifier.dart';
-import 'package:tmd_prototype/widgets/current_state_card.dart';
-import 'package:tmd_prototype/widgets/history_row.dart';
 import 'detection_orchestrator.dart';
+import 'models/classification_model.dart';
+import 'models/prediction_entry.dart';
 import 'models/transport_state.dart';
+import 'widgets/current_state_card.dart';
+import 'widgets/history_row.dart';
 
 void main() => runApp(const TransportDetectorApp());
 
 class TransportDetectorApp extends StatelessWidget {
   const TransportDetectorApp({super.key});
-
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'Transport Mode Detector',
@@ -22,80 +22,100 @@ class TransportDetectorApp extends StatelessWidget {
 }
 
 class DetectorPage extends StatefulWidget {
-  const DetectorPage({super.key});
+  const DetectorPage({super.key, this.orchestrator});
+  final DetectionOrchestrator? orchestrator;
   @override
   State<DetectorPage> createState() => _DetectorPageState();
 }
 
 class _DetectorPageState extends State<DetectorPage> {
-  final _orchestrator = DetectionOrchestrator();
+  late final _orchestrator = widget.orchestrator ?? DetectionOrchestrator();
+  StreamSubscription<TransportState>? _subscription;
+  TransportState _state = TransportState.idle;
   final List<PredictionEntry> _history = [];
-  static const int _maxHistory = 10;
+  static const _maxHistory = 10;
+  bool _toggling = false;
 
   @override
   void initState() {
     super.initState();
-    _orchestrator.stateStream.listen((state) {
-      if (!state.isRunning ||
-            state.activityType == ActivityType.IN_VEHICLE
-            && state.vehicleInference!.windowFill < 1.0) {
-        return;
-      }
+    _state = _orchestrator.currentState;
+    _subscription = _orchestrator.stateStream.listen((state) {
+      if (!mounted) return;
       setState(() {
-        _history.insert(0, PredictionEntry(state));
-        if (_history.length > _maxHistory) _history.removeLast();
+        _state = state;
+        if (state.isRunning &&
+            state.message == null &&
+            (state.activityType != ActivityType.IN_VEHICLE ||
+                state.hasPrediction)) {
+          _history.insert(0, PredictionEntry(state));
+          if (_history.length > _maxHistory) _history.removeLast();
+        }
       });
     });
   }
 
   @override
   void dispose() {
-    _orchestrator.dispose();
+    unawaited(_subscription?.cancel());
+    unawaited(_orchestrator.dispose());
     super.dispose();
   }
 
   Future<void> _toggle() async {
-    if (_orchestrator.running) {
-      await _orchestrator.stop();
-    } else {
-      await _orchestrator.start();
+    setState(() => _toggling = true);
+    try {
+      if (_orchestrator.running) {
+        await _orchestrator.stop();
+      } else {
+        await _orchestrator.start();
+      }
+    } finally {
+      if (mounted) setState(() => _toggling = false);
     }
-    setState(() => {});
   }
 
   Future<void> _showModelPicker() async {
     final selected = await showDialog<ClassificationModel>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Select Classifier Model'),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: ListView(
-              shrinkWrap: true,
-              children: ClassificationModel.values.map((cm) {
-                final isSelected = cm == _orchestrator.selectedModel;
-
-                return ListTile(
-                  title: Text(
-                    VehicleClassifier.modelNames[cm] ?? 'Unknown model',
+      builder: (context) => AlertDialog(
+        title: const Text('Select Classifier Model'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final version in [1, 2]) ...[
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    'Sydney V$version',
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  trailing: isSelected ? const Icon(Icons.check) : null,
-                  onTap: () {
-                    Navigator.of(context).pop(cm);
-                  },
-                );
-              }).toList(),
-            ),
+                ),
+                for (final model in ClassificationModel.values.where(
+                  (m) => m.version == version,
+                ))
+                  ListTile(
+                    key: ValueKey(model.id),
+                    title: Text(
+                      'XGBoost · ${model.windowSeconds}s · seed ${model.seed}',
+                    ),
+                    subtitle: Text(model.sourceRun),
+                    selected: model.id == _orchestrator.selectedModel.id,
+                    trailing: model.id == _orchestrator.selectedModel.id
+                        ? const Icon(Icons.check)
+                        : null,
+                    onTap: () => Navigator.pop(context, model),
+                  ),
+              ],
+            ],
           ),
-        );
-      },
+        ),
+      ),
     );
-
-    if (selected != null && selected != _orchestrator.selectedModel) {
-      setState(() {
-        _orchestrator.setSelectedModel(selected);
-      });
+    if (selected != null && mounted) {
+      setState(() => _orchestrator.setSelectedModel(selected));
     }
   }
 
@@ -107,87 +127,70 @@ class _DetectorPageState extends State<DetectorPage> {
         title: const Text('Transport Detector'),
         centerTitle: true,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            StreamBuilder<TransportState>(
-              stream: _orchestrator.stateStream,
-              initialData: TransportState.idle,
-              builder: (context, snapshot) =>
-                  CurrentStateCard(snapshot.data ?? TransportState.idle),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Prediction History',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    color: theme.colorScheme.outline,
-                  ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Bound the card on small screens; all status details remain scrollable.
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height * 0.42,
                 ),
-                if (_history.isNotEmpty)
-                  Text(
-                    '${_history.length}/$_maxHistory',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.outline,
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: _history.isEmpty
-                  ? Center(
-                      child: Text(
-                        _orchestrator.running
-                            ? 'Waiting for first prediction…'
-                            : 'Press Start to begin',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.outline,
+                child: SingleChildScrollView(child: CurrentStateCard(_state)),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Prediction History', style: theme.textTheme.titleSmall),
+                  if (_history.isNotEmpty)
+                    Text('${_history.length}/$_maxHistory'),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: _history.isEmpty
+                    ? Center(
+                        child: Text(
+                          _orchestrator.running
+                              ? 'Waiting for first prediction…'
+                              : 'Press Start to begin',
                         ),
+                      )
+                    : ListView.separated(
+                        itemCount: _history.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        itemBuilder: (_, i) => HistoryRow(_history[i]),
                       ),
-                    )
-                  : ListView.separated(
-                      itemCount: _history.length,
-                      separatorBuilder: (_, _) => const Divider(height: 1),
-                      itemBuilder: (context, index) =>
-                          HistoryRow(_history[index]),
-                    ),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _showModelPicker,
-              label: Text(
-                'Selected: ${VehicleClassifier.modelNames[_orchestrator.selectedModel]!}',
               ),
-            ),
-            // TODO remove after testing
-            // const SizedBox(height: 8),
-            // OutlinedButton.icon(
-            //   onPressed: _orchestrator.running && !_orchestrator.inVehicle
-            //       ? () => _orchestrator.debugStartVehicleInference()
-            //       : null,
-            //   icon: const Icon(Icons.directions_car),
-            //   label: const Text('Simulate IN_VEHICLE'),
-            // ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: _toggle,
-              icon: Icon(_orchestrator.running ? Icons.stop : Icons.play_arrow),
-              label: Text(
-                _orchestrator.running ? 'Stop Detection' : 'Start Detection',
+              OutlinedButton.icon(
+                onPressed: _showModelPicker,
+                icon: const Icon(Icons.tune),
+                label: Text(
+                  'Selected: ${_orchestrator.selectedModel.name}',
+                  textAlign: TextAlign.center,
+                ),
               ),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                backgroundColor: _orchestrator.running
-                    ? theme.colorScheme.error
-                    : null,
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: _toggling ? null : _toggle,
+                icon: Icon(
+                  _orchestrator.running ? Icons.stop : Icons.play_arrow,
+                ),
+                label: Text(
+                  _orchestrator.running ? 'Stop Detection' : 'Start Detection',
+                ),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  backgroundColor: _orchestrator.running
+                      ? theme.colorScheme.error
+                      : null,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

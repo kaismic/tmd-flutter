@@ -1,28 +1,24 @@
 import 'package:flutter/material.dart';
-import 'package:tmd_prototype/models/transport_state.dart';
+import '../models/inference_window.dart';
 
 class WarmUpProgressIndicator extends StatelessWidget {
-  const WarmUpProgressIndicator(this.state, {super.key});
-  final TransportState state;
-
+  const WarmUpProgressIndicator(this.window, {super.key});
+  final InferenceWindow window;
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return SizedBox(
-      width: 80,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(
-            '${(state.vehicleInference!.windowFill * 100).toInt()}%',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: theme.colorScheme.outline,
-            ),
-          ),
-          const SizedBox(height: 4),
-          LinearProgressIndicator(value: state.vehicleInference!.windowFill),
-        ],
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        'Warm-up incomplete · ${window.recordedDuration.inSeconds}/${window.model.windowSeconds}s',
+        style: Theme.of(context).textTheme.labelMedium,
       ),
-    );
-  }
+      const SizedBox(height: 4),
+      LinearProgressIndicator(
+        value: window.fill,
+        semanticsLabel: 'Recording duration',
+        semanticsValue: '${(window.fill * 100).round()}%',
+      ),
+      const SizedBox(height: 4),
+    ],
+  );
 }

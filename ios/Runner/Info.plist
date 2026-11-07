@@ -66,8 +66,6 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Required to detect transport mode via GPS speed.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Required to detect transport mode via accelerometer and gyroscope.</string>
 </dict>

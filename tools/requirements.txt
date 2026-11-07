@@ -1,0 +1,13 @@
+# Numerical versions recorded by the selected V2 run.
+numpy==2.5.4
+pandas==3.1.0
+scikit-learn==1.9.1
+xgboost==3.4.1
+joblib==1.6.0
+scipy==1.18.1
+pyarrow==26.0.1
+onnx==1.22.0
+onnxruntime==1.24.3
+skl2onnx==1.20.0
+onnxmltools==1.16.0
+pytest==9.1.1
