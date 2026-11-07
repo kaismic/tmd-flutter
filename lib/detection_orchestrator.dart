@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'package:flutter_activity_recognition/flutter_activity_recognition.dart';
 import 'models/classification_model.dart';
+import 'models/inference_mode.dart';
 import 'models/transport_state.dart';
 import 'sensor_service.dart';
 import 'vehicle_classifier.dart';
 
-/// Activity recognition gates collection. The single timer predicts every second
-/// from the selected trailing window; model selection never restarts sensors.
+/// Collection is gated by activity recognition or runs continuously in ONNX-only
+/// mode. Both modes share the one-second timer and selected trailing window.
 class DetectionOrchestrator {
   DetectionOrchestrator({
     SensorService? sensorService,
@@ -30,6 +31,8 @@ class DetectionOrchestrator {
   Future<void> _lifecycle = Future.value();
   ClassificationModel _selected = ClassificationModel.defaultModel;
   ClassificationModel get selectedModel => _selected;
+  InferenceMode _inferenceMode = InferenceMode.activityRecognitionFirst;
+  InferenceMode get inferenceMode => _inferenceMode;
   bool running = false;
   bool inVehicle = false;
   bool _ready = false;
@@ -40,6 +43,15 @@ class DetectionOrchestrator {
   int _startAttempt = 0;
   int? _loadingRevision;
   int? _failedRevision;
+
+  /// Select while stopped; the choice takes effect on the next Start.
+  void setInferenceMode(InferenceMode mode) {
+    if (_disposed) return;
+    if (running) {
+      throw StateError('Stop detection before changing inference mode.');
+    }
+    _inferenceMode = mode;
+  }
 
   void setSelectedModel(ClassificationModel model) {
     if (_disposed) return;
@@ -56,6 +68,11 @@ class DetectionOrchestrator {
     final attempt = ++_startAttempt;
     _revision++;
     try {
+      if (_inferenceMode == InferenceMode.alwaysOnnx) {
+        _startVehicleInference();
+        await _lifecycle;
+        return;
+      }
       final granted = await _permission();
       if (!running || _disposed || attempt != _startAttempt) return;
       if (!granted) {
@@ -79,7 +96,7 @@ class DetectionOrchestrator {
               .listen(
                 _onActivity,
                 onError: (Object _) {
-                  if (!running || _disposed) return;
+                  if (!running || _disposed || attempt != _startAttempt) return;
                   _leaveVehicle();
                   _emit(
                     const TransportState.activity(
@@ -93,45 +110,51 @@ class DetectionOrchestrator {
     } catch (_) {
       if (_disposed || attempt != _startAttempt) return;
       running = false;
-      _emit(
-        const TransportState.error('Could not start activity recognition.'),
-      );
+      _emit(const TransportState.error('Could not start detection.'));
     }
   }
 
   void _onActivity(Activity activity) {
-    if (!running || _disposed) return;
+    if (!running ||
+        _disposed ||
+        _inferenceMode != InferenceMode.activityRecognitionFirst) {
+      return;
+    }
     if (activity.type == ActivityType.IN_VEHICLE) {
-      if (inVehicle) return;
-      inVehicle = true;
-      final collection = ++_collection;
-      _revision++;
-      _lifecycle = _lifecycle.then((_) async {
-        if (!_active(collection)) return;
-        try {
-          await _sensors.start();
-          if (!_active(collection)) return;
-          _ready = true;
-          _timer = Timer.periodic(
-            const Duration(seconds: 1),
-            (_) => unawaited(_tick()),
-          );
-          unawaited(_loadSelection());
-        } catch (_) {
-          if (_active(collection)) {
-            _emit(
-              TransportState.vehicle(
-                _waiting(),
-                message: 'Sensor collection unavailable',
-              ),
-            );
-          }
-        }
-      });
+      _startVehicleInference();
     } else {
       _leaveVehicle();
       _emit(TransportState.activity(activity.type, activity.confidence));
     }
+  }
+
+  void _startVehicleInference() {
+    if (inVehicle) return;
+    inVehicle = true;
+    final collection = ++_collection;
+    _revision++;
+    _lifecycle = _lifecycle.then((_) async {
+      if (!_active(collection)) return;
+      try {
+        await _sensors.start();
+        if (!_active(collection)) return;
+        _ready = true;
+        _timer = Timer.periodic(
+          const Duration(seconds: 1),
+          (_) => unawaited(_tick()),
+        );
+        unawaited(_loadSelection());
+      } catch (_) {
+        if (_active(collection)) {
+          _emit(
+            TransportState.vehicle(
+              _waiting(),
+              message: 'Sensor collection unavailable',
+            ),
+          );
+        }
+      }
+    });
   }
 
   bool _active(int collection) =>

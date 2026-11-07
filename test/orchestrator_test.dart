@@ -3,10 +3,240 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_activity_recognition/flutter_activity_recognition.dart';
 import 'package:tmd_prototype/models/classification_model.dart';
+import 'package:tmd_prototype/models/inference_mode.dart';
 import 'package:tmd_prototype/models/transport_state.dart';
 import 'fakes.dart';
 
 void main() {
+  test(
+    'activity recognition remains the default and gates sensor collection',
+    () {
+      fakeAsync((clock) {
+        var permissionRequests = 0;
+        final h = Harness(
+          () => clock.elapsed,
+          permission: () async {
+            permissionRequests++;
+            return true;
+          },
+        );
+        expect(
+          h.orchestrator.inferenceMode,
+          InferenceMode.activityRecognitionFirst,
+        );
+        unawaited(h.orchestrator.start());
+        clock.flushMicrotasks();
+        expect(permissionRequests, 1);
+        expect(h.activities.hasListener, isTrue);
+        expect(h.sensors.starts, 0);
+        h.walking();
+        clock.flushMicrotasks();
+        clock.elapse(const Duration(seconds: 1));
+        expect(h.states.last.activityType, ActivityType.WALKING);
+        expect(h.classifier.predictions, isEmpty);
+        h.vehicle();
+        clock.flushMicrotasks();
+        expect(h.sensors.starts, 1);
+        unawaited(h.dispose());
+        clock.flushMicrotasks();
+      });
+    },
+  );
+
+  test(
+    'always ONNX starts immediately without activity permission or subscription',
+    () {
+      fakeAsync((clock) {
+        var permissionRequests = 0;
+        final h = Harness(
+          () => clock.elapsed,
+          inferenceMode: InferenceMode.alwaysOnnx,
+          permission: () async {
+            permissionRequests++;
+            throw StateError('Activity recognition must not be used');
+          },
+        );
+        unawaited(h.orchestrator.start());
+        clock.flushMicrotasks();
+        expect(permissionRequests, 0);
+        expect(h.activities.hasListener, isFalse);
+        expect(h.sensors.starts, 1);
+        expect(h.orchestrator.inVehicle, isTrue);
+        h.sensors.sample();
+        h.walking();
+        h.activities.addError(StateError('Activity recognition unavailable'));
+        clock.flushMicrotasks();
+        clock.elapse(const Duration(seconds: 1));
+        expect(h.classifier.predictions.length, 1);
+        expect(h.states.last.label, 'Car');
+        expect(h.states.last.vehicleInference!.window.fill, .01);
+        expect(h.sensors.stops, 0);
+        unawaited(h.orchestrator.stop());
+        clock.flushMicrotasks();
+        expect(h.sensors.buffer.length, 0);
+        expect(h.classifier.closed, isTrue);
+        expect(clock.periodicTimerCount, 0);
+        unawaited(h.dispose());
+        clock.flushMicrotasks();
+      });
+    },
+  );
+
+  test('always ONNX reuses recordings when classification model changes', () {
+    fakeAsync((clock) {
+      final h = Harness(
+        () => clock.elapsed,
+        inferenceMode: InferenceMode.alwaysOnnx,
+      );
+      unawaited(h.orchestrator.start());
+      clock.flushMicrotasks();
+      h.sensors.sample();
+      clock.elapse(const Duration(seconds: 1));
+      h.orchestrator.setSelectedModel(ClassificationModel.values.last);
+      clock.flushMicrotasks();
+      clock.elapse(const Duration(seconds: 1));
+      expect(h.sensors.starts, 1);
+      expect(
+        h.states.last.vehicleInference!.window.model.id,
+        ClassificationModel.values.last.id,
+      );
+      expect(
+        h.states.last.vehicleInference!.window.recordedDuration.inSeconds,
+        2,
+      );
+      expect(h.classifier.predictions.length, 2);
+      unawaited(h.dispose());
+      clock.flushMicrotasks();
+    });
+  });
+
+  test(
+    'mode change requires stopping and switching back restores activity gating',
+    () {
+      fakeAsync((clock) {
+        var permissionRequests = 0;
+        final h = Harness(
+          () => clock.elapsed,
+          inferenceMode: InferenceMode.alwaysOnnx,
+          permission: () async {
+            permissionRequests++;
+            return true;
+          },
+        );
+        unawaited(h.orchestrator.start());
+        clock.flushMicrotasks();
+        expect(
+          () => h.orchestrator.setInferenceMode(
+            InferenceMode.activityRecognitionFirst,
+          ),
+          throwsStateError,
+        );
+        expect(h.orchestrator.inferenceMode, InferenceMode.alwaysOnnx);
+        unawaited(h.orchestrator.stop());
+        clock.flushMicrotasks();
+        h.orchestrator.setInferenceMode(InferenceMode.activityRecognitionFirst);
+        unawaited(h.orchestrator.start());
+        clock.flushMicrotasks();
+        expect(permissionRequests, 1);
+        expect(h.activities.hasListener, isTrue);
+        expect(h.sensors.starts, 1);
+        expect(h.orchestrator.inVehicle, isFalse);
+        h.vehicle();
+        clock.flushMicrotasks();
+        expect(h.sensors.starts, 2);
+        unawaited(h.dispose());
+        clock.flushMicrotasks();
+      });
+    },
+  );
+
+  test('always ONNX can be selected after activity permission denial', () {
+    fakeAsync((clock) {
+      var permissionRequests = 0;
+      final h = Harness(
+        () => clock.elapsed,
+        permission: () async {
+          permissionRequests++;
+          return false;
+        },
+      );
+      unawaited(h.orchestrator.start());
+      clock.flushMicrotasks();
+      expect(h.orchestrator.running, isFalse);
+      h.orchestrator.setInferenceMode(InferenceMode.alwaysOnnx);
+      unawaited(h.orchestrator.start());
+      clock.flushMicrotasks();
+      h.sensors.sample();
+      clock.elapse(const Duration(seconds: 1));
+      expect(permissionRequests, 1);
+      expect(h.states.last.hasPrediction, isTrue);
+      unawaited(h.dispose());
+      clock.flushMicrotasks();
+    });
+  });
+
+  test(
+    'always ONNX suppresses in-flight results after stop and restarts cleanly',
+    () {
+      fakeAsync((clock) {
+        final h = Harness(
+          () => clock.elapsed,
+          inferenceMode: InferenceMode.alwaysOnnx,
+        );
+        final prediction = Completer<(VehicleMode, double)>();
+        h.classifier.predictionGate = prediction;
+        unawaited(h.orchestrator.start());
+        clock.flushMicrotasks();
+        h.sensors.sample();
+        clock.elapse(const Duration(seconds: 1));
+        unawaited(h.orchestrator.stop());
+        clock.flushMicrotasks();
+        prediction.complete((VehicleMode.bus, .9));
+        clock.flushMicrotasks();
+        expect(h.states.last.isRunning, isFalse);
+        expect(h.states.where((s) => s.hasPrediction), isEmpty);
+        h.classifier.predictionGate = null;
+        unawaited(h.orchestrator.start());
+        clock.flushMicrotasks();
+        h.sensors.sample();
+        clock.elapse(const Duration(seconds: 1));
+        expect(h.states.last.label, 'Car');
+        expect(
+          h.states.last.vehicleInference!.window.recordedDuration.inSeconds,
+          1,
+        );
+        expect(clock.periodicTimerCount, 1);
+        unawaited(h.dispose());
+        clock.flushMicrotasks();
+        expect(clock.periodicTimerCount, 0);
+      });
+    },
+  );
+
+  test(
+    'stopping during always ONNX sensor startup does not create a timer later',
+    () {
+      fakeAsync((clock) {
+        final h = Harness(
+          () => clock.elapsed,
+          inferenceMode: InferenceMode.alwaysOnnx,
+        );
+        final sensorStart = Completer<void>();
+        h.sensors.startGate = sensorStart;
+        unawaited(h.orchestrator.start());
+        clock.flushMicrotasks();
+        unawaited(h.orchestrator.stop());
+        sensorStart.complete();
+        clock.flushMicrotasks();
+        expect(clock.periodicTimerCount, 0);
+        expect(h.classifier.loads, isEmpty);
+        expect(h.orchestrator.running, isFalse);
+        unawaited(h.dispose());
+        clock.flushMicrotasks();
+      });
+    },
+  );
+
   void scenario(void Function(FakeAsync, Harness) body) {
     fakeAsync((clock) {
       final h = Harness(() => clock.elapsed);

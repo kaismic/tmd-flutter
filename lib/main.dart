@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_activity_recognition/flutter_activity_recognition.dart';
 import 'detection_orchestrator.dart';
 import 'models/classification_model.dart';
+import 'models/inference_mode.dart';
 import 'models/prediction_entry.dart';
 import 'models/transport_state.dart';
 import 'widgets/current_state_card.dart';
@@ -119,6 +120,37 @@ class _DetectorPageState extends State<DetectorPage> {
     }
   }
 
+  Future<void> _showInferenceModePicker() async {
+    final selected = await showDialog<InferenceMode>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Select Inference Mode'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final mode in InferenceMode.values)
+                ListTile(
+                  key: ValueKey(mode),
+                  title: Text(mode.label),
+                  subtitle: Text(mode.description),
+                  selected: mode == _orchestrator.inferenceMode,
+                  trailing: mode == _orchestrator.inferenceMode
+                      ? const Icon(Icons.check)
+                      : null,
+                  onTap: () => Navigator.pop(context, mode),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (selected != null && mounted && !_toggling && !_orchestrator.running) {
+      setState(() => _orchestrator.setInferenceMode(selected));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -136,7 +168,7 @@ class _DetectorPageState extends State<DetectorPage> {
               // Bound the card on small screens; all status details remain scrollable.
               ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxHeight: MediaQuery.sizeOf(context).height * 0.42,
+                  maxHeight: MediaQuery.sizeOf(context).height * 0.32,
                 ),
                 child: SingleChildScrollView(child: CurrentStateCard(_state)),
               ),
@@ -165,6 +197,23 @@ class _DetectorPageState extends State<DetectorPage> {
                         itemBuilder: (_, i) => HistoryRow(_history[i]),
                       ),
               ),
+              Tooltip(
+                message: _orchestrator.running
+                    ? 'Stop detection to change inference mode'
+                    : 'Choose how detection starts',
+                child: OutlinedButton.icon(
+                  key: const ValueKey('inference-mode-selector'),
+                  onPressed: _toggling || _orchestrator.running
+                      ? null
+                      : _showInferenceModePicker,
+                  icon: const Icon(Icons.route),
+                  label: Text(
+                    'Inference: ${_orchestrator.inferenceMode.label}',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
               OutlinedButton.icon(
                 onPressed: _showModelPicker,
                 icon: const Icon(Icons.tune),

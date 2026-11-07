@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tmd_prototype/main.dart';
 import 'package:tmd_prototype/models/classification_model.dart';
+import 'package:tmd_prototype/models/inference_mode.dart';
 import 'package:tmd_prototype/models/prediction_entry.dart';
 import 'package:tmd_prototype/models/transport_state.dart';
 import 'package:tmd_prototype/sensor_buffer.dart';
@@ -26,6 +27,54 @@ TransportState prediction({int seconds = 1}) {
 }
 
 void main() {
+  testWidgets(
+    'inference selector starts ONNX directly and locks the mode until stopped',
+    (tester) async {
+      var now = Duration.zero;
+      final h = Harness(
+        () => now,
+        permission: () async =>
+            throw StateError('Must not request activity permission'),
+      );
+      await tester.pumpWidget(
+        MaterialApp(home: DetectorPage(orchestrator: h.orchestrator)),
+      );
+      expect(
+        find.text('Inference: Activity recognition first'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('inference-mode-selector')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(InferenceMode.activityRecognitionFirst.description),
+        findsOneWidget,
+      );
+      expect(find.text(InferenceMode.alwaysOnnx.description), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey(InferenceMode.alwaysOnnx)));
+      await tester.pumpAndSettle();
+      expect(find.text('Inference: Always use ONNX'), findsOneWidget);
+      await tester.tap(find.text('Start Detection'));
+      await tester.pump();
+      expect(h.sensors.starts, 1);
+      expect(h.activities.hasListener, isFalse);
+      final selector = find.byKey(const ValueKey('inference-mode-selector'));
+      expect(tester.widget<OutlinedButton>(selector).onPressed, isNull);
+      h.sensors.sample();
+      now = const Duration(seconds: 1);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(h.orchestrator.currentState.label, 'Car');
+      expect(find.textContaining('Warm-up incomplete'), findsWidgets);
+      await tester.tap(find.text('Stop Detection'));
+      await tester.pump();
+      expect(tester.widget<OutlinedButton>(selector).onPressed, isNotNull);
+      expect(find.text('Inference: Always use ONNX'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      await h.activities.close();
+    },
+  );
+
   testWidgets(
     'early result shows mode, confidence, identity, progress and coverage',
     (tester) async {
@@ -121,25 +170,30 @@ void main() {
     },
   );
 
-  testWidgets('narrow screen accommodates status details without overflow', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(320, 640);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final h = Harness(() => const Duration(seconds: 100));
-    await tester.pumpWidget(
-      MaterialApp(home: DetectorPage(orchestrator: h.orchestrator)),
-    );
-    await tester.tap(find.text('Start Detection'));
-    await tester.pump();
-    h.vehicle();
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox());
-    await tester.pump();
-    await h.activities.close();
-  });
+  for (final mode in InferenceMode.values) {
+    testWidgets('narrow screen accommodates ${mode.label} without overflow', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final h = Harness(
+        () => const Duration(seconds: 100),
+        inferenceMode: mode,
+      );
+      await tester.pumpWidget(
+        MaterialApp(home: DetectorPage(orchestrator: h.orchestrator)),
+      );
+      await tester.tap(find.text('Start Detection'));
+      await tester.pump();
+      h.vehicle();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      await h.activities.close();
+    });
+  }
 }

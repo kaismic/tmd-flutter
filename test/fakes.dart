@@ -3,6 +3,7 @@ import 'package:flutter_activity_recognition/flutter_activity_recognition.dart';
 import 'package:tmd_prototype/detection_orchestrator.dart';
 import 'package:tmd_prototype/models/classification_model.dart';
 import 'package:tmd_prototype/models/inference_window.dart';
+import 'package:tmd_prototype/models/inference_mode.dart';
 import 'package:tmd_prototype/models/sensor_reading.dart';
 import 'package:tmd_prototype/models/transport_state.dart';
 import 'package:tmd_prototype/sensor_service.dart';
@@ -89,14 +90,18 @@ class FakeClassifier extends VehicleClassifier {
 }
 
 class Harness {
-  Harness(Duration Function() now, {Future<bool> Function()? permission})
-    : sensors = FakeSensors(now) {
+  Harness(
+    Duration Function() now, {
+    Future<bool> Function()? permission,
+    InferenceMode inferenceMode = InferenceMode.activityRecognitionFirst,
+  }) : sensors = FakeSensors(now) {
     orchestrator = DetectionOrchestrator(
       sensorService: sensors,
       classifier: classifier,
       activities: activities.stream,
       requestPermission: permission ?? () async => true,
     );
+    orchestrator.setInferenceMode(inferenceMode);
     orchestrator.stateStream.listen(states.add);
   }
   final activities = StreamController<Activity>.broadcast();

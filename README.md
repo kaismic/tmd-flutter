@@ -1,8 +1,9 @@
 # Transport Mode Detector
 
-Flutter prototype that uses activity recognition for still/walking/running/cycling
-and on-device ONNX inference to distinguish bus, car and train during vehicle
-activity. Model selection works before and during detection.
+Flutter prototype with two inference modes: activity recognition followed by
+on-device vehicle classification, or continuous ONNX classification assuming a
+vehicle. ONNX models distinguish bus, car and train. Model selection works
+before and during detection.
 
 ## Models
 
@@ -70,9 +71,25 @@ recordings or participant names.
 
 ## Detection and warm-up
 
-Press **Start Detection** and grant activity-recognition permission. Sensors
-start when activity recognition reports a vehicle and stop when that activity
-ends. Stopping detection also clears all recordings. Collection requests about
+Use the **Inference** selector while detection is stopped to choose:
+
+1. **Activity recognition first** (default): grant activity-recognition
+   permission when starting. Non-vehicle activities pass through directly;
+   sensors and ONNX inference run when activity recognition reports a vehicle
+   and stop when that activity ends.
+2. **Always use ONNX**: assume a vehicle and start sensor collection immediately
+   on **Start Detection**, classifying bus, car or train every second until
+   stopped. This mode bypasses the activity-recognition API, its permission
+   request and its event stream. Walking/still/running/cycling are not model
+   outputs in this mode.
+
+Mode selection lasts for the current app session and is retained after Stop.
+Stop detection before changing inference mode; the selector is disabled during
+a run and its tooltip explains this. Classification models remain selectable
+during inference in both modes, preserving the shared sensor buffer.
+
+Stopping detection clears all recordings. Both modes use the same warm-up,
+buffering and error handling described below. Collection requests about
 60 Hz accelerometer, 5 Hz gyroscope and 5 Hz magnetometer; actual delivery
 depends on the device. A rate cap with delivery-jitter allowance bounds memory.
 
@@ -135,13 +152,15 @@ extractor contract; its small synthetic outputs are tracked under `test/fixtures
 The tests cover short/missing/duplicate/constant readings, selected-window
 slicing, maximum retention, coverage recovery, one-second scheduling, model
 switches, load/prediction failures, stop/restart, native resource cleanup, picker
-selection, early-result history and narrow screens.
+selection, early-result history and narrow screens. Mode tests cover immediate
+ONNX startup, activity-permission bypass, ignored activity events, switching
+modes between runs, and cleanup of pending startup/inference on Stop.
 
 The prepared bundle passed **77,640 ONNX parity cases**. V2 reconstruction
 matched **7,720 saved held-out predictions/probability vectors exactly**; maximum
 ONNX probability error across all exports was **1.7881393e-7**.
 
-Validation on 7 November 2026: **29 Flutter tests** and **5 Python tests** passed;
+Validation on 7 November 2026: **38 Flutter tests** and **5 Python tests** passed;
 static analysis reported no issues and the Android debug APK built successfully.
 All 18 packaged model and fixture hashes matched the validated bundle. Native
 Android inference and live sensor/activity behavior remain unverified: no
