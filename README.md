@@ -133,6 +133,10 @@ flutter build apk --debug --no-pub
 flutter test integration_test/models_test.dart -d DEVICE_ID --no-pub
 ```
 
+Android release builds must keep the `ai.onnxruntime` Java classes and members
+from R8 shrinking/renaming. ONNX Runtime resolves these by name through JNI;
+the app's `android/app/proguard-rules.pro` contains the required keep rule.
+
 The integration test loads every model through the app's native ONNX wrapper
 and checks representative predictions, including missing features. It requires
 a connected Android device/emulator; desktop unit tests do not exercise native
